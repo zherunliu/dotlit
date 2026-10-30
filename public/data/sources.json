@@ -1,0 +1,48 @@
+{
+  "version": "datav-2021-tw-atlas-2021.9.20-v1",
+  "generatedAt": "2026-10-27T08:29:01.432Z",
+  "sources": [
+    {
+      "name": "DataV.GeoAtlas",
+      "url": "https://datav.aliyun.com/portal/school/atlas/area_selector",
+      "note": "公开行政区边界；全国文件 Last-Modified 为 2021-06-29。各省为获取时的历史快照，不声明为最新区划。地图数据原始使用条件以 DataV／上游高德说明为准。"
+    },
+    {
+      "name": "国土测绘中心 / taiwan-atlas",
+      "url": "https://github.com/dkaoster/taiwan-atlas",
+      "note": "taiwan-atlas@2021.9.20 的未投影 counties-10t.json；原始来源 https://data.gov.tw/dataset/7442，政府资料开放授权条款第1版；转换代码 MIT。TWD97 经纬度与 WGS84 在本图显示比例下差异可忽略。县市几何中北纬21度以南的远海部分由全国海域附图展示。"
+    }
+  ],
+  "regionCount": 391,
+  "sourceFiles": [
+    "https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/130000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/140000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/150000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/210000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/220000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/230000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/320000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/330000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/340000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/350000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/360000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/370000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/410000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/420000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/430000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/440000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/450000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/460000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/510000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/520000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/530000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/540000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/610000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/620000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/630000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/640000_full.json",
+    "https://geo.datav.aliyun.com/areas_v3/bound/650000_full.json"
+  ],
+  "taiwanFile": "https://cdn.jsdelivr.net/npm/taiwan-atlas@2021.9.20/counties-10t.json"
+}

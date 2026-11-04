@@ -8,6 +8,7 @@ import {
 } from 'd3-zoom';
 import {
   COLORS,
+  chinaFootprints,
   createMapLayout,
   geometryPart,
   labelPosition,
@@ -16,8 +17,9 @@ import {
   MAP_WIDTH,
   regionColor,
   regionStroke,
+  CHINA_ENTRY,
 } from '../lib/map';
-import type { MapData, Records, Region } from '../types';
+import type { Attraction, MapData, Records, Region } from '../types';
 import Icon from './Icon';
 
 export default function TravelMap({
@@ -27,6 +29,9 @@ export default function TravelMap({
   selectedId,
   onSelect,
   onProvince,
+  attractions,
+  focusedAttraction,
+  onAttraction,
   filter,
 }: {
   data: MapData;
@@ -35,6 +40,9 @@ export default function TravelMap({
   selectedId: string | null;
   onSelect: (region: Region) => void;
   onProvince: (id: string | null) => void;
+  attractions: Attraction[];
+  focusedAttraction: Attraction | null;
+  onAttraction: (attraction: Attraction) => void;
   filter: 'all' | 'visited' | 'planned';
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -46,6 +54,34 @@ export default function TravelMap({
   const layout = useMemo(
     () => createMapLayout(data, provinceId),
     [data, provinceId],
+  );
+  const regionPaths = useMemo(
+    () =>
+      new Map(
+        layout.regions.map((r) => [r.properties.id, layout.regionPath(r)]),
+      ),
+    [layout],
+  );
+  const worldLabelIds = useMemo(
+    () =>
+      new Set(
+        layout.isWorld
+          ? layout.regions
+              .filter((r) => layout.path.area(r) > 1800)
+              .map((r) => r.properties.id)
+          : [],
+      ),
+    [layout],
+  );
+  const chinaVisitPaths = useMemo(
+    () =>
+      layout.isWorld
+        ? chinaFootprints(data, records).map((r) => ({
+            id: r.properties.id,
+            path: layout.path(mainFeature(r)) ?? '',
+          }))
+        : [],
+    [data, layout, records],
   );
   const cityLabels = useMemo(() => {
     if (!provinceId && transform.k <= 1.8) return [];
@@ -67,6 +103,13 @@ export default function TravelMap({
     }
     const candidates = layout.regions
       .filter((r) => r.properties.id !== r.properties.provinceId)
+      .filter(
+        (r) =>
+          !layout.isWorld ||
+          transform.k > 1.8 ||
+          r.properties.id === selectedId ||
+          worldLabelIds.has(r.properties.id),
+      )
       .sort(
         (a, b) =>
           Number(b.properties.id === selectedId) -
@@ -108,7 +151,7 @@ export default function TravelMap({
       result.push({ region, point });
     }
     return result;
-  }, [layout, provinceId, transform, selectedId, records]);
+  }, [layout, provinceId, transform, selectedId, records, worldLabelIds]);
   useEffect(() => {
     const svg = svgRef.current!;
     const behavior = zoom<SVGSVGElement, unknown>()
@@ -132,6 +175,21 @@ export default function TravelMap({
       select(svg).on('.zoom', null);
     };
   }, [provinceId]);
+  useEffect(() => {
+    const point =
+      focusedAttraction && layout.projection(focusedAttraction.coordinates);
+    if (!point || !behaviorRef.current || !svgRef.current) return;
+    const scale = layout.isWorld ? 8 : 3;
+    select(svgRef.current).call(
+      behaviorRef.current.transform,
+      zoomIdentity
+        .translate(
+          MAP_WIDTH / 2 - point[0] * scale,
+          MAP_HEIGHT / 2 - point[1] * scale,
+        )
+        .scale(scale),
+    );
+  }, [layout, focusedAttraction]);
   const scaleBy = (factor: number) => {
     if (behaviorRef.current && svgRef.current)
       select(svgRef.current).call(behaviorRef.current.scaleBy, factor);
@@ -142,9 +200,12 @@ export default function TravelMap({
   };
   const matches = (id: string) =>
     filter === 'all' || Boolean(records[id]?.[filter]);
-  const activeHover = data.regions.features.find(
+  const activeHover = [...layout.regions, ...data.regions.features].find(
     (r) => r.properties.id === hovered,
   );
+  const pinRegions = layout.isWorld
+    ? [...layout.regions, ...data.regions.features]
+    : layout.regions;
   const clickRegion = (r: Region) => {
     setHovered(null);
     onSelect(r);
@@ -153,29 +214,37 @@ export default function TravelMap({
     <div className="map-stage">
       <div className="map-caption">
         <span className="live-dot" />
-        {provinceId
-          ? data.provinces.features.find((p) => p.properties.id === provinceId)
-              ?.properties.name
-          : '中国 · 市级旅行地图'}
+        {layout.isWorld
+          ? '世界地图'
+          : provinceId
+            ? data.provinces.features.find(
+                (p) => p.properties.id === provinceId,
+              )?.properties.name
+            : '中国 · 市级旅行地图'}
       </div>
       <svg
         ref={svgRef}
         viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
         className="travel-map"
         role="img"
-        aria-label="中国旅行足迹地图，可拖拽缩放；也可使用右侧城市列表选择区域"
+        aria-label="旅行地图，可拖拽缩放，也可通过搜索选择地区"
       >
         <defs>
           <clipPath id={clipId}>
             <rect x="846" y="454" width="114" height="158" />
           </clipPath>
+          {layout.chinaOutline && (
+            <clipPath id={`${clipId}-china`}>
+              <path d={regionPaths.get(CHINA_ENTRY)} />
+            </clipPath>
+          )}
         </defs>
         <g transform={transform.toString()}>
           <g className="city-regions">
             {layout.regions.map((r) => (
               <path
                 key={r.properties.id}
-                d={layout.path(mainFeature(r)) ?? ''}
+                d={regionPaths.get(r.properties.id)}
                 data-region={r.properties.id}
                 fill={regionColor(r.properties.id, records)}
                 className={`${selectedId === r.properties.id ? 'selected-region' : ''} ${!matches(r.properties.id) ? 'muted-region' : ''}`}
@@ -195,6 +264,15 @@ export default function TravelMap({
               </path>
             ))}
           </g>
+          {layout.chinaOutline && (
+            <g clipPath={`url(#${clipId}-china)`} pointerEvents="none">
+              {chinaVisitPaths
+                .filter(({ id }) => matches(id))
+                .map(({ id, path }) => (
+                  <path key={id} d={path} fill={regionColor(id, records)} />
+                ))}
+            </g>
+          )}
           <g className="province-borders" pointerEvents="none">
             {layout.provinces.map((p) => (
               <path
@@ -250,7 +328,7 @@ export default function TravelMap({
             ))}
           </g>
           <g className="plan-pins">
-            {layout.regions
+            {pinRegions
               .filter(
                 (r) =>
                   records[r.properties.id]?.planned && matches(r.properties.id),
@@ -276,6 +354,33 @@ export default function TravelMap({
                   </g>
                 );
               })}
+          </g>
+          <g className="attraction-markers">
+            {attractions.map((attraction) => {
+              const point = layout.projection(attraction.coordinates);
+              if (!point) return null;
+              const active = focusedAttraction?.id === attraction.id;
+              return (
+                <g
+                  key={attraction.id}
+                  data-attraction={attraction.id}
+                  transform={`translate(${point[0]},${point[1]}) scale(${1 / transform.k})`}
+                  onClick={() => onAttraction(attraction)}
+                >
+                  <title>{attraction.name}</title>
+                  <circle r={10} fill="transparent" />
+                  <path
+                    d="M0 -5L5 0L0 5L-5 0Z"
+                    className={active ? 'attraction-active' : ''}
+                  />
+                  {active && (
+                    <text y={-11} textAnchor="middle">
+                      {attraction.name}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
           </g>
         </g>
         {layout.showInset && (
@@ -324,11 +429,13 @@ export default function TravelMap({
         <div className="map-hover" role="status">
           <strong>{activeHover.properties.name}</strong>
           <span>
-            {records[hovered!]?.visited
-              ? '★'.repeat(records[hovered!].rating!)
-              : records[hovered!]?.planned
-                ? '已加入旅行计划'
-                : '未标记'}
+            {hovered === CHINA_ENTRY
+              ? '查看省市'
+              : records[hovered!]?.visited
+                ? '★'.repeat(records[hovered!].rating!)
+                : records[hovered!]?.planned
+                  ? '已加入旅行计划'
+                  : '未标记'}
           </span>
         </div>
       )}

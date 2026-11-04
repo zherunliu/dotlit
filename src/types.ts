@@ -6,8 +6,22 @@ export interface RegionProperties {
   shortName: string;
   provinceId: string;
   center: [number, number];
+  searchNames?: string[];
 }
 export type Region = Feature<Geometry, RegionProperties>;
+export interface Attraction {
+  id: string;
+  name: string;
+  aliases: string[];
+  regionId: string;
+  coordinates: [number, number];
+  source: string;
+}
+export interface WorldData {
+  version: string;
+  regions: FeatureCollection<Geometry, RegionProperties>;
+  source: MapData['sources'][number];
+}
 export interface MapData {
   version: string;
   generatedAt: string;
@@ -15,6 +29,7 @@ export interface MapData {
   regions: FeatureCollection<Geometry, RegionProperties>;
   maritime: FeatureCollection;
   sources: { name: string; url: string; note: string }[];
+  world?: WorldData;
 }
 export interface TravelRecord {
   regionId: string;

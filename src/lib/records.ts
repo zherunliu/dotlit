@@ -27,7 +27,7 @@ export function validateRecord(
         Number(r.rating) > 5
       : r.rating !== null
   )
-    throw new Error('去过的城市需要 1–5 整数星；未去过的城市不能有评分。');
+    throw new Error('去过的地区需要 1–5 整数星。');
   if (typeof r.note !== 'string' || r.note.length > 500)
     throw new Error('备注需要在 500 字以内。');
   if (
@@ -59,6 +59,7 @@ export function parseBackup(
   text: string,
   regionIds: Set<string>,
   mapVersion: string,
+  legacy?: { version: string; regionIds: Set<string> },
 ): Backup {
   let b: Record<string, unknown>;
   try {
@@ -68,22 +69,28 @@ export function parseBackup(
   }
   if (!b || typeof b !== 'object' || b.format !== 'dotlit' || b.version !== 1)
     throw new Error('不支持这个备份格式或版本。');
-  if (b.mapVersion !== mapVersion)
+  const validIds =
+    b.mapVersion === mapVersion
+      ? regionIds
+      : legacy && b.mapVersion === legacy.version
+        ? legacy.regionIds
+        : null;
+  if (!validIds)
     throw new Error('备份的地图数据版本与当前版本不兼容，未导入任何记录。');
   if (
     typeof b.exportedAt !== 'string' ||
     !Number.isFinite(Date.parse(b.exportedAt))
   )
     throw new Error('备份导出时间不正确。');
-  if (!Array.isArray(b.records) || b.records.length > regionIds.size)
+  if (!Array.isArray(b.records) || b.records.length > validIds.size)
     throw new Error('备份中的记录列表不正确。');
-  const records = b.records.map((r) => validateRecord(r, regionIds));
+  const records = b.records.map((r) => validateRecord(r, validIds));
   if (new Set(records.map((r) => r.regionId)).size !== records.length)
     throw new Error('备份中存在重复区域，请检查文件。');
   return {
     format: 'dotlit',
     version: 1,
-    mapVersion,
+    mapVersion: b.mapVersion as string,
     exportedAt: b.exportedAt,
     records,
   };

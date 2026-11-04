@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { Backup, MapData, Records, Region, TravelRecord } from './types';
+import type {
+  Backup,
+  MapData,
+  Records,
+  Region,
+  TravelRecord,
+  WorldData,
+  Attraction,
+} from './types';
 import {
   indexRecords,
   makeBackup,
@@ -10,7 +18,14 @@ import {
   validateRecord,
   type RecordAction,
 } from './lib/records';
-import { cleanMapSvg, RATING_COLORS, renderMapPng } from './lib/map';
+import {
+  CHINA_ENTRY,
+  cleanMapSvg,
+  RATING_COLORS,
+  renderMapPng,
+  WORLD_SCOPE,
+} from './lib/map';
+import attractionsData from './data/attractions.json';
 import { downloadBlob, localDate } from './lib/download';
 import Icon from './components/Icon';
 import TravelMap from './components/TravelMap';
@@ -19,26 +34,36 @@ import Modal from './components/Modal';
 
 type Filter = 'all' | 'visited' | 'planned';
 type Dialog = 'export' | 'import' | 'about' | null;
-const filterNames: Record<Filter, string> = {
-  all: '全部城市',
+const attractions = attractionsData as Attraction[];
+const filterNames: Record<Exclude<Filter, 'all'>, string> = {
   visited: '我的足迹',
   planned: '旅行计划',
 };
-const normalizeQuery = (text: string) => text.trim().replace(/臺/g, '台');
+const normalizeQuery = (text: string) =>
+  text
+    .trim()
+    .replace(/臺/g, '台')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '');
 
 export default function App() {
-  const [data, setData] = useState<MapData | null>(null);
+  const [data, setData] = useState<(MapData & { world: WorldData }) | null>(
+    null,
+  );
   const [error, setError] = useState('');
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`${import.meta.env.BASE_URL}data/china.json`, {
-      signal: controller.signal,
-    })
-      .then((response) => {
-        if (!response.ok) throw new Error('地图文件加载失败');
-        return response.json();
-      })
-      .then(setData)
+    async function loadMap<T>(name: string): Promise<T> {
+      const response = await fetch(
+        `${import.meta.env.BASE_URL}data/${name}.json`,
+        { signal: controller.signal },
+      );
+      if (!response.ok) throw new Error('地图文件加载失败');
+      return response.json();
+    }
+    Promise.all([loadMap<MapData>('china'), loadMap<WorldData>('world')])
+      .then(([china, world]) => setData({ ...china, world }))
       .catch((err) => {
         if (err.name !== 'AbortError')
           setError('地图暂时无法加载，请刷新重试。');
@@ -76,17 +101,35 @@ function Brand() {
   );
 }
 
-function Workspace({ data }: { data: MapData }) {
+function Workspace({ data }: { data: MapData & { world: WorldData } }) {
+  const worldRegions = data.world.regions.features;
+  const chinaRegions = data.regions.features;
+  const mapVersion = `${data.version}+${data.world.version}`;
+  const legacy = useMemo(
+    () => ({
+      version: data.version,
+      regionIds: new Set(chinaRegions.map((r) => r.properties.id)),
+    }),
+    [data.version, chinaRegions],
+  );
   const regionIds = useMemo(
-    () => new Set(data.regions.features.map((r) => r.properties.id)),
-    [data],
+    () =>
+      new Set([
+        ...legacy.regionIds,
+        ...worldRegions
+          .map((r) => r.properties.id)
+          .filter((id) => id !== CHINA_ENTRY),
+      ]),
+    [legacy, worldRegions],
   );
   const [initial] = useState(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       return {
         records: raw
-          ? indexRecords(parseBackup(raw, regionIds, data.version).records)
+          ? indexRecords(
+              parseBackup(raw, regionIds, mapVersion, legacy).records,
+            )
           : {},
         error: '',
       };
@@ -103,20 +146,23 @@ function Workspace({ data }: { data: MapData }) {
     initial.records as Records,
   );
   const [storageError, setStorageError] = useState(initial.error);
-  const [provinceId, setProvinceId] = useState<string | null>(null);
+  const [provinceId, setProvinceId] = useState<string | null>(WORLD_SCOPE);
+  const isWorld = provinceId === WORLD_SCOPE;
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedAttraction, setSelectedAttraction] =
+    useState<Attraction | null>(null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [dialog, setDialog] = useState<Dialog>(null);
   const [pendingBackup, setPendingBackup] = useState<Backup | null>(null);
   const [toast, setToast] = useState('');
-  const [exportProvince, setExportProvince] = useState(false);
+  const [exportScope, setExportScope] = useState<string | null>(WORLD_SCOPE);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState('');
   const [mobileList, setMobileList] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const stats = travelStats(records, regionIds.size);
-  const selected = data.regions.features.find(
+  const selected = [...worldRegions, ...chinaRegions].find(
     (r) => r.properties.id === selectedId,
   );
   const currentProvince = data.provinces.features.find(
@@ -134,15 +180,63 @@ function Workspace({ data }: { data: MapData }) {
   );
   const results = useMemo(() => {
     const q = normalizeQuery(query);
-    return data.regions.features.filter(
-      (r) =>
-        (!provinceId || r.properties.provinceId === provinceId) &&
-        (!q ||
-          normalizeQuery(r.properties.name).includes(q) ||
-          normalizeQuery(provinceNames[r.properties.provinceId]).includes(q)) &&
-        (filter === 'all' || Boolean(records[r.properties.id]?.[filter])),
-    );
-  }, [data, provinceId, query, filter, records, provinceNames]);
+    const places = isWorld
+      ? q || filter !== 'all'
+        ? [...worldRegions, ...chinaRegions]
+        : worldRegions
+      : chinaRegions.filter(
+          (r) => !provinceId || r.properties.provinceId === provinceId,
+        );
+    return places.filter(({ properties: place }) => {
+      const names = [
+        place.name,
+        ...(place.searchNames ?? []),
+        provinceNames[place.provinceId] ?? '',
+      ];
+      return (
+        (!q || names.some((name) => normalizeQuery(name).includes(q))) &&
+        (filter === 'all' || Boolean(records[place.id]?.[filter]))
+      );
+    });
+  }, [
+    chinaRegions,
+    worldRegions,
+    isWorld,
+    provinceId,
+    query,
+    filter,
+    records,
+    provinceNames,
+  ]);
+  const isLegacyImport = pendingBackup?.mapVersion === legacy.version;
+  const placesById = useMemo(
+    () =>
+      new Map(
+        [...worldRegions, ...chinaRegions].map((r) => [r.properties.id, r]),
+      ),
+    [worldRegions, chinaRegions],
+  );
+  const attractionQuery = normalizeQuery(query);
+  function attractionLocation(attraction: Attraction) {
+    const place = placesById.get(attraction.regionId)?.properties;
+    if (!place) return '';
+    const province = provinceNames[place.provinceId];
+    return province && province !== place.name
+      ? `${province} · ${place.name}`
+      : place.name;
+  }
+  const attractionResults = attractionQuery
+    ? attractions.filter((attraction) => {
+        const names = [
+          attraction.name,
+          ...attraction.aliases,
+          attractionLocation(attraction),
+        ];
+        return names.some((name) =>
+          normalizeQuery(name).includes(attractionQuery),
+        );
+      })
+    : [];
   useEffect(() => {
     if (!toast) return;
     const id = window.setTimeout(() => setToast(''), 5500);
@@ -153,7 +247,7 @@ function Workspace({ data }: { data: MapData }) {
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify(makeBackup(next, data.version)),
+        JSON.stringify(makeBackup(next, mapVersion)),
       );
       setStorageError('');
     } catch {
@@ -164,13 +258,35 @@ function Workspace({ data }: { data: MapData }) {
     dispatch(action);
   }
   function selectRegion(region: Region) {
+    if (region.properties.id === CHINA_ENTRY) {
+      focusProvince(null);
+      setMobileList(false);
+      return;
+    }
+    if (
+      legacy.regionIds.has(region.properties.id) &&
+      (isWorld || (query && !provinceId))
+    ) {
+      setProvinceId(region.properties.provinceId);
+      setQuery('');
+    }
+    setSelectedAttraction(null);
     setSelectedId(region.properties.id);
     setMobileList(false);
   }
   function focusProvince(id: string | null) {
     setProvinceId(id);
     setSelectedId(null);
+    setSelectedAttraction(null);
     setQuery('');
+  }
+  function focusAttraction(attraction: Attraction) {
+    const place = placesById.get(attraction.regionId);
+    if (!place) return;
+    setProvinceId(place.properties.provinceId || WORLD_SCOPE);
+    setSelectedId(null);
+    setSelectedAttraction({ ...attraction });
+    setMobileList(false);
   }
   function saveRecord(record: TravelRecord) {
     try {
@@ -183,7 +299,7 @@ function Workspace({ data }: { data: MapData }) {
   }
   function exportData() {
     downloadBlob(
-      new Blob([JSON.stringify(makeBackup(records, data.version), null, 2)], {
+      new Blob([JSON.stringify(makeBackup(records, mapVersion), null, 2)], {
         type: 'application/json;charset=utf-8',
       }),
       `dotlit-旅行备份-${localDate()}.json`,
@@ -195,7 +311,12 @@ function Workspace({ data }: { data: MapData }) {
     try {
       if (file.size > 5 * 1024 * 1024)
         throw new Error('文件超过 5 MB，请选择 Dotlit 导出的 JSON 备份。');
-      const backup = parseBackup(await file.text(), regionIds, data.version);
+      const backup = parseBackup(
+        await file.text(),
+        regionIds,
+        mapVersion,
+        legacy,
+      );
       setPendingBackup(backup);
       setDialog('import');
     } catch (error) {
@@ -206,12 +327,14 @@ function Workspace({ data }: { data: MapData }) {
     setExporting(true);
     setExportError('');
     try {
-      const scope = exportProvince && provinceId ? provinceId : null;
-      const blob = await renderMapPng(cleanMapSvg(data, records, scope));
-      downloadBlob(
-        blob,
-        `dotlit-${scope ? currentProvince!.properties.shortName : '中国'}-足迹-${localDate()}.png`,
-      );
+      const name =
+        exportScope === WORLD_SCOPE
+          ? '全球'
+          : exportScope
+            ? provinceNames[exportScope]
+            : '中国';
+      const blob = await renderMapPng(cleanMapSvg(data, records, exportScope));
+      downloadBlob(blob, `dotlit-${name}-足迹-${localDate()}.png`);
       setDialog(null);
       setToast('已导出图片');
     } catch (error) {
@@ -247,7 +370,7 @@ function Workspace({ data }: { data: MapData }) {
             className="button primary"
             onClick={() => {
               setExportError('');
-              setExportProvince(false);
+              setExportScope(provinceId);
               setDialog('export');
             }}
           >
@@ -266,14 +389,14 @@ function Workspace({ data }: { data: MapData }) {
               <span>去过</span>
               <strong>
                 {String(stats.visited).padStart(2, '0')}
-                <small>座</small>
+                <small>处</small>
               </strong>
             </div>
             <div className="stat">
               <span>计划</span>
               <strong>
                 {String(stats.planned).padStart(2, '0')}
-                <small>座</small>
+                <small>处</small>
               </strong>
             </div>
             <div className="stat progress-stat">
@@ -301,25 +424,32 @@ function Workspace({ data }: { data: MapData }) {
           <div className="atlas-toolbar">
             <div className="location-tools">
               <button
-                className={`country-button ${!provinceId ? 'active' : ''}`}
-                onClick={() => focusProvince(null)}
+                className={`country-button ${isWorld ? 'active' : ''}`}
+                onClick={() => focusProvince(WORLD_SCOPE)}
               >
                 <Icon name="globe" size={16} />
-                {provinceId ? '返回全国' : '全国地图'}
+                世界地图
               </button>
-              <span className="toolbar-divider" />
-              <select
-                aria-label="选择省份聚焦"
-                value={provinceId ?? ''}
-                onChange={(e) => focusProvince(e.target.value || null)}
+              <button
+                className={`country-button ${provinceId === null ? 'active' : ''}`}
+                onClick={() => focusProvince(null)}
               >
-                <option value="">选择省份</option>
-                {data.provinces.features.map((p) => (
-                  <option key={p.properties.id} value={p.properties.id}>
-                    {p.properties.name}
-                  </option>
-                ))}
-              </select>
+                中国地图
+              </button>
+              {!isWorld && (
+                <select
+                  aria-label="选择省份聚焦"
+                  value={provinceId ?? ''}
+                  onChange={(e) => focusProvince(e.target.value || null)}
+                >
+                  <option value="">选择省份</option>
+                  {data.provinces.features.map((p) => (
+                    <option key={p.properties.id} value={p.properties.id}>
+                      {p.properties.name}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
             <div className="filter-tabs" role="group" aria-label="筛选旅行状态">
               {(['all', 'visited', 'planned'] as Filter[]).map((f) => (
@@ -338,11 +468,12 @@ function Workspace({ data }: { data: MapData }) {
               className="mobile-list-button button quiet"
               onClick={() => {
                 setSelectedId(null);
+                setSelectedAttraction(null);
                 setMobileList(true);
               }}
             >
               <Icon name="search" size={16} />
-              找城市
+              搜索
             </button>
           </div>
           <div className="atlas-body">
@@ -354,6 +485,16 @@ function Workspace({ data }: { data: MapData }) {
                 selectedId={selectedId}
                 onSelect={selectRegion}
                 onProvince={focusProvince}
+                attractions={attractions.filter(
+                  (attraction) =>
+                    isWorld ||
+                    (legacy.regionIds.has(attraction.regionId) &&
+                      (!provinceId ||
+                        placesById.get(attraction.regionId)?.properties
+                          .provinceId === provinceId)),
+                )}
+                focusedAttraction={selectedAttraction}
+                onAttraction={focusAttraction}
                 filter={filter}
               />
               <div className="map-legend">
@@ -380,18 +521,58 @@ function Workspace({ data }: { data: MapData }) {
                     <Icon name="pin" size={15} />
                     <span>计划去</span>
                   </div>
+                  <div className="legend-attraction">
+                    <span aria-hidden="true">◆</span> 景点
+                  </div>
                 </div>
               </div>
             </div>
             <aside
-              className={`sidebar ${selected || mobileList ? 'mobile-open' : ''}`}
-              aria-label="城市记录与索引"
+              className={`sidebar ${selected || selectedAttraction || mobileList ? 'mobile-open' : ''} ${selectedAttraction ? 'attraction-detail' : ''}`}
+              aria-label="旅行记录与地区索引"
             >
-              {selected ? (
+              {selectedAttraction ? (
+                <div className="region-editor">
+                  <div className="editor-topline">
+                    <span>景点</span>
+                    <button
+                      className="icon-button"
+                      aria-label="关闭景点"
+                      onClick={() => setSelectedAttraction(null)}
+                    >
+                      <Icon name="close" size={17} />
+                    </button>
+                  </div>
+                  <div className="editor-place">
+                    <span>{attractionLocation(selectedAttraction)}</span>
+                    <h2>{selectedAttraction.name}</h2>
+                  </div>
+                  <button
+                    className="button primary"
+                    onClick={() => {
+                      const place = placesById.get(selectedAttraction.regionId);
+                      if (place) selectRegion(place);
+                    }}
+                  >
+                    查看地区记录
+                  </button>
+                  <a
+                    className="attraction-source"
+                    href={selectedAttraction.source}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    景点资料
+                  </a>
+                </div>
+              ) : selected ? (
                 <RegionEditor
                   key={`${selected.properties.id}-${records[selected.properties.id]?.updatedAt ?? 'new'}`}
                   region={selected}
-                  province={provinceNames[selected.properties.provinceId]}
+                  province={
+                    provinceNames[selected.properties.provinceId] ??
+                    selected.properties.searchNames?.[0]
+                  }
                   saved={records[selected.properties.id]}
                   onSave={saveRecord}
                   onDelete={() => {
@@ -407,7 +588,7 @@ function Workspace({ data }: { data: MapData }) {
                 <>
                   <button
                     className="icon-button mobile-close"
-                    aria-label="关闭城市列表"
+                    aria-label="关闭地区列表"
                     onClick={() => setMobileList(false)}
                   >
                     <Icon name="close" />
@@ -415,10 +596,10 @@ function Workspace({ data }: { data: MapData }) {
                   <label className="search-field">
                     <Icon name="search" size={17} />
                     <input
-                      aria-label="搜索城市"
+                      aria-label="搜索地区或景点"
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
-                      placeholder="搜索城市"
+                      placeholder="搜索地区或景点"
                     />
                     {query && (
                       <button
@@ -435,84 +616,109 @@ function Workspace({ data }: { data: MapData }) {
                       {currentProvince
                         ? currentProvince.properties.shortName + ' · '
                         : ''}
-                      {filterNames[filter]}
+                      {query.trim()
+                        ? '搜索结果'
+                        : filter === 'all'
+                          ? isWorld
+                            ? '国家和地区'
+                            : '城市'
+                          : filterNames[filter]}
                     </span>
-                    <span>{results.length} 座</span>
+                    <span>{results.length + attractionResults.length} 处</span>
                   </div>
                   <div className="city-index">
-                    {results.length ? (
-                      results.map((r) => {
-                        const record = records[r.properties.id];
-                        return (
-                          <button
-                            className="city-row"
-                            key={r.properties.id}
-                            onClick={() => {
-                              if (query && !provinceId)
-                                setProvinceId(r.properties.provinceId);
-                              selectRegion(r);
-                            }}
-                          >
-                            <span
-                              className={`city-status ${record?.visited ? 'visited' : ''}`}
-                              style={
-                                record?.visited
-                                  ? {
-                                      background:
-                                        RATING_COLORS[record.rating! - 1],
-                                    }
-                                  : undefined
-                              }
+                    {attractionResults.map((attraction) => (
+                      <button
+                        className="city-row"
+                        key={attraction.id}
+                        onClick={() => focusAttraction(attraction)}
+                      >
+                        <span className="attraction-symbol" aria-hidden="true">
+                          ◆
+                        </span>
+                        <span className="city-row-name">
+                          {attraction.name}
+                          <small>景点 · {attractionLocation(attraction)}</small>
+                        </span>
+                        <span className="city-row-meta">
+                          <Icon name="chevron" size={13} />
+                        </span>
+                      </button>
+                    ))}
+                    {results.length
+                      ? results.map((r) => {
+                          const record = records[r.properties.id];
+                          return (
+                            <button
+                              className="city-row"
+                              key={r.properties.id}
+                              onClick={() => selectRegion(r)}
+                            >
+                              <span
+                                className={`city-status ${record?.visited ? 'visited' : ''}`}
+                                style={
+                                  record?.visited
+                                    ? {
+                                        background:
+                                          RATING_COLORS[record.rating! - 1],
+                                      }
+                                    : undefined
+                                }
+                              />
+                              <span className="city-row-name">
+                                {r.properties.name}
+                                <small>
+                                  {r.properties.id === CHINA_ENTRY
+                                    ? '省市地图'
+                                    : (provinceNames[r.properties.provinceId] ??
+                                      r.properties.searchNames?.[0])}
+                                </small>
+                              </span>
+                              <span className="city-row-meta">
+                                {record?.visited && (
+                                  <span className="row-rating">
+                                    {record.rating}
+                                    <span>★</span>
+                                  </span>
+                                )}
+                                {record?.planned && (
+                                  <Icon name="pin" size={14} />
+                                )}
+                                <Icon name="chevron" size={13} />
+                              </span>
+                            </button>
+                          );
+                        })
+                      : attractionResults.length === 0 && (
+                          <div className="empty-results">
+                            <Icon
+                              name={filter === 'planned' ? 'pin' : 'search'}
+                              size={28}
                             />
-                            <span className="city-row-name">
-                              {r.properties.name}
-                              <small>
-                                {provinceNames[r.properties.provinceId]}
-                              </small>
-                            </span>
-                            <span className="city-row-meta">
-                              {record?.visited && (
-                                <span className="row-rating">
-                                  {record.rating}
-                                  <span>★</span>
-                                </span>
-                              )}
-                              {record?.planned && <Icon name="pin" size={14} />}
-                              <Icon name="chevron" size={13} />
-                            </span>
-                          </button>
-                        );
-                      })
-                    ) : (
-                      <div className="empty-results">
-                        <Icon
-                          name={filter === 'planned' ? 'pin' : 'search'}
-                          size={28}
-                        />
-                        <h3>
-                          {query
-                            ? '未找到城市'
-                            : filter === 'visited'
-                              ? '暂无去过的城市'
-                              : '暂无计划'}
-                        </h3>
-                        <p>
-                          {query
-                            ? '尝试其他名称或返回全国搜索。'
-                            : '选择城市后添加记录。'}
-                        </p>
-                        <button
-                          className="text-button"
-                          onClick={() => {
-                            setFilter('all');
-                            setQuery('');
-                          }}
-                        >
-                          查看全部城市
-                          <Icon name="arrow" size={14} />
-                        </button>
-                      </div>
-                    )}
+                            <h3>
+                              {query
+                                ? '未找到地区或景点'
+                                : filter === 'visited'
+                                  ? '暂无足迹'
+                                  : '暂无计划'}
+                            </h3>
+                            <p>
+                              {query
+                                ? '尝试其他名称或切换地图。'
+                                : '选择地区后添加记录。'}
+                            </p>
+                            <button
+                              className="text-button"
+                              onClick={() => {
+                                setFilter('all');
+                                setQuery('');
+                              }}
+                            >
+                              查看全部
+                              <Icon name="arrow" size={14} />
+                            </button>
+                          </div>
+                        )}
                   </div>
                 </>
               )}
@@ -562,43 +768,35 @@ function Workspace({ data }: { data: MapData }) {
           }}
         >
           <p className="modal-description">
-            保留边界、星级颜色和省名，不含图钉及操作界面。
+            导出边界和星级填色。中国地图保留省名。
           </p>
           <div className="export-preview" aria-hidden="true">
             <div
               dangerouslySetInnerHTML={{
-                __html: cleanMapSvg(
-                  data,
-                  records,
-                  exportProvince ? provinceId : null,
-                ),
+                __html: cleanMapSvg(data, records, exportScope),
               }}
             />
             <span>高清 PNG · 3200 × 2080</span>
           </div>
           <fieldset className="export-options">
             <legend>导出范围</legend>
-            <label>
-              <input
-                type="radio"
-                name="export-scope"
-                checked={!exportProvince}
-                onChange={() => setExportProvince(false)}
-              />
-              完整中国地图
-            </label>
-            <label className={!provinceId ? 'disabled' : ''}>
-              <input
-                type="radio"
-                name="export-scope"
-                checked={exportProvince}
-                disabled={!provinceId}
-                onChange={() => setExportProvince(true)}
-              />
-              {currentProvince
-                ? currentProvince.properties.name
-                : '当前省份（请先聚焦省份）'}
-            </label>
+            {[
+              { id: WORLD_SCOPE, name: '世界地图' },
+              { id: null, name: '中国地图' },
+              ...(currentProvince
+                ? [{ id: provinceId, name: currentProvince.properties.name }]
+                : []),
+            ].map(({ id, name }) => (
+              <label key={id ?? 'china'}>
+                <input
+                  type="radio"
+                  name="export-scope"
+                  checked={exportScope === id}
+                  onChange={() => setExportScope(id)}
+                />
+                {name}
+              </label>
+            ))}
           </fieldset>
           {exportError && (
             <p className="form-error" role="alert">
@@ -618,14 +816,16 @@ function Workspace({ data }: { data: MapData }) {
       {dialog === 'import' && pendingBackup && (
         <Modal title="导入数据" onClose={() => setDialog(null)}>
           <p className="modal-description">
-            文件已通过校验。确认后将整体替换当前记录。
+            {isLegacyImport
+              ? '旧版备份仅替换中国的记录。'
+              : '导入后将替换全部记录。'}
           </p>
           <div className="import-summary">
             <span>
-              备份记录<strong>{pendingBackup.records.length} 座</strong>
+              备份记录<strong>{pendingBackup.records.length} 处</strong>
             </span>
             <span>
-              当前记录<strong>{Object.keys(records).length} 座</strong>
+              当前记录<strong>{Object.keys(records).length} 处</strong>
             </span>
             <span>
               备份时间
@@ -648,7 +848,16 @@ function Workspace({ data }: { data: MapData }) {
               onClick={() => {
                 commit({
                   type: 'replace',
-                  records: indexRecords(pendingBackup.records),
+                  records: isLegacyImport
+                    ? {
+                        ...Object.fromEntries(
+                          Object.entries(records).filter(
+                            ([id]) => !legacy.regionIds.has(id),
+                          ),
+                        ),
+                        ...indexRecords(pendingBackup.records),
+                      }
+                    : indexRecords(pendingBackup.records),
                 });
                 setSelectedId(null);
                 setDialog(null);
@@ -670,11 +879,21 @@ function Workspace({ data }: { data: MapData }) {
             <h3>记录口径</h3>
             <p>
               共 {regionIds.size}{' '}
-              个记录区域。地级行政区各一块，直辖市与港澳各一块，省直辖县市单独记录，台湾按
-              22 个市县记录。探索比例按区域数量计算，不按面积计算。
+              个可记录地区。国外按国家和地区记录，中国按市级及特殊区域记录。探索进度按全部可记录地区计算。
             </p>
             <h3>地图来源与版本</h3>
-            {data.sources.map((source) => (
+            <p>
+              精选景点坐标来自{' '}
+              <a
+                href="https://www.wikidata.org/"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Wikidata
+              </a>
+              。
+            </p>
+            {[data.world.source, ...data.sources].map((source) => (
               <p key={source.name}>
                 <a href={source.url} target="_blank" rel="noreferrer">
                   {source.name} ↗
@@ -684,7 +903,7 @@ function Workspace({ data }: { data: MapData }) {
               </p>
             ))}
             <p className="map-version">
-              地图版本：{data.version}
+              地图版本：{mapVersion}
               <br />
               用于个人足迹可视化，不用于测量或导航。
             </p>

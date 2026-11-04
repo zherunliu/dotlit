@@ -12,7 +12,7 @@ export default function RegionEditor({
   onClose,
 }: {
   region: Region;
-  province: string;
+  province?: string;
   saved?: TravelRecord;
   onSave: (record: TravelRecord) => void;
   onDelete: () => void;
@@ -48,10 +48,10 @@ export default function RegionEditor({
   return (
     <div className="region-editor">
       <div className="editor-topline">
-        <span>城市记录</span>
+        <span>地区记录</span>
         <button
           className="icon-button"
-          aria-label="关闭城市记录"
+          aria-label="关闭地区记录"
           onClick={() => {
             if (!dirty || window.confirm('有尚未保存的修改，确定离开吗？'))
               onClose();
@@ -90,7 +90,7 @@ export default function RegionEditor({
             className="stars"
             onMouseLeave={() => setStarHover(0)}
             role="group"
-            aria-label="城市星级评分"
+            aria-label="星级评分"
           >
             {[1, 2, 3, 4, 5].map((n) => (
               <button

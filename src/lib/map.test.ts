@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { geoArea, geoContains } from 'd3-geo';
 import { describe, expect, it } from 'vitest';
-import type { MapData, Records } from '../types';
+import type { MapData, Records, WorldData } from '../types';
+import attractions from '../data/attractions.json';
 import { blankRecord } from './records';
 import {
   cleanMapSvg,
@@ -11,11 +12,92 @@ import {
   mainFeature,
   regionColor,
   RATING_COLORS,
+  WORLD_SCOPE,
 } from './map';
 
 const data = JSON.parse(
   readFileSync('public/data/china.json', 'utf8'),
 ) as MapData;
+const world = JSON.parse(
+  readFileSync('public/data/world.json', 'utf8'),
+) as WorldData;
+
+describe('world map and attractions', () => {
+  const globalData = { ...data, world };
+  it('covers every Chinese province and keeps attractions in their assigned city', () => {
+    const cities = new Map(
+      data.regions.features.map((r) => [r.properties.id, r]),
+    );
+    const coveredProvinces = new Set<string>();
+    // Keep verified locations where the simplified base map differs.
+    const simplifiedBoundary = new Set([
+      'Q716232',
+      'Q1025339',
+      'Q2149114',
+      // Taipei Travel places Lungshan Temple in Wanhua, Taipei.
+      'Q706761',
+    ]);
+    for (const attraction of attractions) {
+      if (attraction.regionId.startsWith('world:')) continue;
+      const city = cities.get(attraction.regionId);
+      expect(city, attraction.name).toBeDefined();
+      coveredProvinces.add(city!.properties.provinceId);
+      if (!simplifiedBoundary.has(attraction.id)) {
+        const [longitude, latitude] = attraction.coordinates;
+        expect(geoContains(city!, [longitude, latitude]), attraction.name).toBe(
+          true,
+        );
+      }
+    }
+    expect(coveredProvinces).toEqual(
+      new Set(data.provinces.features.map((p) => p.properties.id)),
+    );
+  });
+  it('projects country shapes and every attraction in the corresponding map scope', () => {
+    const layout = createMapLayout(globalData, WORLD_SCOPE);
+    const regions = new Map(
+      [...layout.regions, ...data.regions.features].map((r) => [
+        r.properties.id,
+        r,
+      ]),
+    );
+    expect(layout.regions.length).toBeGreaterThan(200);
+    expect(layout.showInset).toBe(false);
+    for (const region of layout.regions) {
+      expect(layout.regionPath(region)).toBeTruthy();
+      expect(layout.regionPath(region)).not.toMatch(/NaN|Infinity/);
+    }
+    for (const attraction of attractions) {
+      const parent = regions.get(attraction.regionId);
+      expect(parent, attraction.name).toBeDefined();
+      const [lon, lat] = attraction.coordinates;
+      expect(Math.abs(lon)).toBeLessThanOrEqual(180);
+      expect(Math.abs(lat)).toBeLessThanOrEqual(90);
+      const scope = parent!.properties.provinceId || WORLD_SCOPE;
+      expect(
+        createMapLayout(globalData, scope)
+          .projection([lon, lat])
+          ?.every(Number.isFinite),
+      ).toBe(true);
+    }
+  });
+  it('exports country fills and existing Chinese city fills without attraction markers', () => {
+    const records: Records = Object.fromEntries(
+      ['world:FRA', 'cn:110000'].map((id) => [
+        id,
+        { ...blankRecord(id), visited: true, rating: 5 },
+      ]),
+    );
+    const svg = cleanMapSvg(globalData, records, WORLD_SCOPE);
+    for (const id of Object.keys(records)) {
+      expect(svg).toMatch(
+        new RegExp(`data-region="${id}"[^>]*fill="${RATING_COLORS[4]}"`),
+      );
+    }
+    expect(svg).not.toContain('南海诸岛');
+    expect(svg).not.toContain('埃菲尔铁塔');
+  });
+});
 describe('bundled geographical coverage', () => {
   it('has 34 province outlines, unique regional IDs and valid parent references', () => {
     expect(data.provinces.features).toHaveLength(34);

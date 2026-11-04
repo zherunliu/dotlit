@@ -540,6 +540,50 @@ h1 {
   font-size: 10px;
   white-space: nowrap;
 }
+.legend-attraction {
+  white-space: nowrap;
+  font-size: 10px;
+}
+.legend-attraction span,
+.attraction-symbol {
+  color: #696b9c;
+}
+.attraction-markers g {
+  cursor: pointer;
+}
+.attraction-markers path {
+  fill: #696b9c;
+  stroke: #f7f6ee;
+  stroke-width: 1.5;
+}
+.attraction-markers .attraction-active {
+  fill: #414377;
+  stroke-width: 2;
+}
+.attraction-markers text {
+  fill: #414377;
+  font-size: 13px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: #f7f6ee;
+  stroke-width: 3px;
+}
+.attraction-source {
+  margin-inline-start: 12px;
+  color: #52694b;
+  font-size: 12px;
+}
+@media (max-width: 680px) {
+  .sidebar.mobile-open.attraction-detail {
+    height: auto;
+  }
+  .attraction-detail .editor-place {
+    padding-block: 6px 12px;
+  }
+  .attraction-detail .editor-place h2 {
+    font-size: 21px;
+  }
+}
 .sidebar {
   border-left: 1px solid var(--line);
   background: #fcfcf7;

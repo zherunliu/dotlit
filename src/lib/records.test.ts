@@ -21,6 +21,27 @@ const record: TravelRecord = {
 };
 const backup = () => makeBackup({ [record.regionId]: record }, mapVersion);
 describe('travel state and persistence contract', () => {
+  it('accepts a China-only backup after global expansion and validates its original ID scope', () => {
+    const globalVersion = `${mapVersion}+world`;
+    const worldId = 'world:FRA';
+    const globalIds = new Set([...ids, worldId]);
+    const legacy = { version: mapVersion, regionIds: ids };
+    expect(
+      parseBackup(JSON.stringify(backup()), globalIds, globalVersion, legacy)
+        .records,
+    ).toEqual([record]);
+    expect(() =>
+      parseBackup(
+        JSON.stringify({
+          ...backup(),
+          records: [blankRecord(worldId)],
+        }),
+        globalIds,
+        globalVersion,
+        legacy,
+      ),
+    ).toThrow('未知区域');
+  });
   it('keeps a rating and a return-trip plan at the same time', () => {
     const state = recordsReducer({}, { type: 'save', record });
     expect(state[record.regionId]).toMatchObject({

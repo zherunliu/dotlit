@@ -1,9 +1,16 @@
-import { geoConicConformal, geoMercator, geoPath } from 'd3-geo';
+import {
+  geoConicConformal,
+  geoMercator,
+  geoNaturalEarth1,
+  geoPath,
+} from 'd3-geo';
 import type { Feature, FeatureCollection, Geometry, Position } from 'geojson';
 import type { MapData, Records, Region } from '../types';
 
 export const MAP_WIDTH = 1000;
 export const MAP_HEIGHT = 650;
+export const WORLD_SCOPE = 'world';
+export const CHINA_ENTRY = 'world:CHN';
 export const COLORS = {
   paper: '#f3f2e8',
   empty: '#e4e7d9',
@@ -48,32 +55,43 @@ export function createMapLayout(
   data: MapData,
   provinceId: string | null = null,
 ) {
+  const world = provinceId === WORLD_SCOPE ? data.world : undefined;
   const focus = data.provinces.features.find(
     (p) => p.properties.id === provinceId,
   );
-  const provinces = focus ? [focus] : data.provinces.features;
-  const regions = focus
-    ? data.regions.features.filter(
-        (r) => r.properties.provinceId === provinceId,
-      )
-    : data.regions.features;
+  const provinces = world ? [] : focus ? [focus] : data.provinces.features;
+  const regions = world
+    ? world.regions.features
+    : focus
+      ? data.regions.features.filter(
+          (r) => r.properties.provinceId === provinceId,
+        )
+      : data.regions.features;
   const collection: FeatureCollection = {
     type: 'FeatureCollection',
     features: provinces.map(mainFeature),
   };
-  const projection = geoConicConformal()
-    .parallels([25, 47])
-    .rotate([-105, 0])
-    .center([0, 36])
-    .fitExtent(
-      [
-        [45, 32],
-        [MAP_WIDTH - 55, MAP_HEIGHT - 48],
-      ],
-      collection,
-    );
+  const projection = world
+    ? geoNaturalEarth1().fitExtent(
+        [
+          [24, 36],
+          [MAP_WIDTH - 24, MAP_HEIGHT - 36],
+        ],
+        { type: 'Sphere' },
+      )
+    : geoConicConformal()
+        .parallels([25, 47])
+        .rotate([-105, 0])
+        .center([0, 36])
+        .fitExtent(
+          [
+            [45, 32],
+            [MAP_WIDTH - 55, MAP_HEIGHT - 48],
+          ],
+          collection,
+        );
   const path = geoPath(projection);
-  const showInset = !provinceId || provinceId === 'cn:460000';
+  const showInset = !world && (!provinceId || provinceId === 'cn:460000');
   const insetProjection = geoMercator()
     .center([114, 13])
     .scale(270)
@@ -84,10 +102,20 @@ export function createMapLayout(
     provinces,
     projection,
     path,
+    isWorld: Boolean(world),
+    regionPath: (region: Region) =>
+      path(world ? region : mainFeature(region)) ?? '',
+    chinaOutline: world?.regions.features.find(
+      (r) => r.properties.id === CHINA_ENTRY,
+    ),
     showInset,
     insetProjection,
     insetPath,
   };
+}
+
+export function chinaFootprints(data: MapData, records: Records) {
+  return data.regions.features.filter((r) => records[r.properties.id]?.visited);
 }
 
 export function labelPosition(
@@ -124,12 +152,20 @@ export function cleanMapSvg(
   records: Records,
   provinceId: string | null,
 ): string {
-  const { regions, provinces, projection, path, showInset, insetPath } =
-    createMapLayout(data, provinceId);
+  const {
+    regions,
+    provinces,
+    projection,
+    path,
+    showInset,
+    insetPath,
+    regionPath,
+    chinaOutline,
+  } = createMapLayout(data, provinceId);
   const paths = regions
     .map(
       (r) =>
-        `<path data-region="${xml(r.properties.id)}" d="${path(mainFeature(r)) ?? ''}" fill="${regionColor(r.properties.id, records)}" stroke="${regionStroke(r.properties.id, records)}" stroke-width="0.65"/>`,
+        `<path data-region="${xml(r.properties.id)}" d="${regionPath(r)}" fill="${regionColor(r.properties.id, records)}" stroke="${regionStroke(r.properties.id, records)}" stroke-width="0.65"/>`,
     )
     .join('');
   const boundaries = provinces
@@ -149,13 +185,24 @@ export function cleanMapSvg(
     })
     .join('');
   let inset = '';
+  const detail = chinaOutline
+    ? `<defs><clipPath id="china-detail"><path d="${regionPath(chinaOutline)}"/></clipPath></defs><g clip-path="url(#china-detail)">${chinaFootprints(
+        data,
+        records,
+      )
+        .map(
+          (r) =>
+            `<path data-region="${xml(r.properties.id)}" d="${path(mainFeature(r)) ?? ''}" fill="${regionColor(r.properties.id, records)}"/>`,
+        )
+        .join('')}</g>`
+    : '';
   if (showInset) {
     const pieces = data.regions.features
       .map((f) => ({ feature: geometryPart(f, true), id: f.properties.id }))
       .filter((p) => p.feature);
     inset = `<defs><clipPath id="sea-clip"><rect x="846" y="454" width="114" height="158"/></clipPath></defs><rect x="846" y="454" width="114" height="158" rx="2" fill="${COLORS.paper}" stroke="#adb7a4" stroke-width="0.8"/><g clip-path="url(#sea-clip)">${pieces.map((p) => `<path d="${insetPath(p.feature!) ?? ''}" fill="${regionColor(p.id, records)}" stroke="${COLORS.border}" stroke-width="0.5"/>`).join('')}${data.maritime.features.map((f) => `<path d="${insetPath(f) ?? ''}" fill="${COLORS.border}"/>`).join('')}</g><text x="903" y="602" text-anchor="middle" fill="${COLORS.ink}" font-family="serif" font-size="10">南海诸岛</text>`;
   }
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="3200" height="2080" viewBox="0 0 ${MAP_WIDTH} ${MAP_HEIGHT}"><rect width="1000" height="650" fill="${COLORS.paper}"/>${paths}${boundaries}${labels}${inset}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="3200" height="2080" viewBox="0 0 ${MAP_WIDTH} ${MAP_HEIGHT}"><rect width="1000" height="650" fill="${COLORS.paper}"/>${paths}${detail}${boundaries}${labels}${inset}</svg>`;
 }
 
 export async function renderMapPng(svg: string): Promise<Blob> {

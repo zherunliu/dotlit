@@ -212,16 +212,6 @@ export default function TravelMap({
   };
   return (
     <div className="map-stage">
-      <div className="map-caption">
-        <span className="live-dot" />
-        {layout.isWorld
-          ? '世界地图'
-          : provinceId
-            ? data.provinces.features.find(
-                (p) => p.properties.id === provinceId,
-              )?.properties.name
-            : '中国 · 市级旅行地图'}
-      </div>
       <svg
         ref={svgRef}
         viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}

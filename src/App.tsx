@@ -73,7 +73,6 @@ export default function App() {
   if (!data)
     return (
       <div className="loading-screen">
-        <Brand />
         <p role="status">{error || '加载地图…'}</p>
         {error && (
           <button className="button" onClick={() => location.reload()}>
@@ -83,22 +82,6 @@ export default function App() {
       </div>
     );
   return <Workspace data={data} />;
-}
-
-function Brand() {
-  return (
-    <div className="brand">
-      <div className="brand-symbol" aria-hidden="true">
-        <svg viewBox="0 0 32 38">
-          <path d="m16 3 8 14-8 18-8-18Z" fill="currentColor" />
-          <path d="m16 3 8 14h-8Z" fill="#b6c99e" />
-          <circle cx="16" cy="18" r="3" fill="#f7f5ec" />
-        </svg>
-      </div>
-      <span className="brand-name">行迹</span>
-      <span className="brand-english">dotlit</span>
-    </div>
-  );
 }
 
 function Workspace({ data }: { data: MapData & { world: WorldData } }) {
@@ -347,7 +330,32 @@ function Workspace({ data }: { data: MapData & { world: WorldData } }) {
   return (
     <>
       <header className="site-header">
-        <Brand />
+        <div className="travel-stats">
+          <div className="stat">
+            <span>去过</span>
+            <strong>
+              {String(stats.visited).padStart(2, '0')}
+              <small>处</small>
+            </strong>
+          </div>
+          <div className="stat">
+            <span>计划</span>
+            <strong>
+              {String(stats.planned).padStart(2, '0')}
+              <small>处</small>
+            </strong>
+          </div>
+          <div className="stat progress-stat">
+            <span>探索进度</span>
+            <strong>
+              {stats.percent.toFixed(1)}
+              <small>%</small>
+            </strong>
+            <div className="progress-track">
+              <div style={{ width: `${stats.percent}%` }} />
+            </div>
+          </div>
+        </div>
         <nav className="header-actions" aria-label="备份与导出">
           <button
             className="button quiet"
@@ -380,37 +388,6 @@ function Workspace({ data }: { data: MapData & { world: WorldData } }) {
         </nav>
       </header>
       <main className="workspace">
-        <section className="intro">
-          <div className="intro-copy">
-            <h1>旅行地图</h1>
-          </div>
-          <div className="travel-stats">
-            <div className="stat">
-              <span>去过</span>
-              <strong>
-                {String(stats.visited).padStart(2, '0')}
-                <small>处</small>
-              </strong>
-            </div>
-            <div className="stat">
-              <span>计划</span>
-              <strong>
-                {String(stats.planned).padStart(2, '0')}
-                <small>处</small>
-              </strong>
-            </div>
-            <div className="stat progress-stat">
-              <span>探索进度</span>
-              <strong>
-                {stats.percent.toFixed(1)}
-                <small>%</small>
-              </strong>
-              <div className="progress-track">
-                <div style={{ width: `${stats.percent}%` }} />
-              </div>
-            </div>
-          </div>
-        </section>
         {storageError && (
           <div className="storage-warning" role="alert">
             <Icon name="info" />
@@ -767,9 +744,6 @@ function Workspace({ data }: { data: MapData & { world: WorldData } }) {
             if (!exporting) setDialog(null);
           }}
         >
-          <p className="modal-description">
-            导出边界和星级填色。中国地图保留省名。
-          </p>
           <div className="export-preview" aria-hidden="true">
             <div
               dangerouslySetInnerHTML={{
@@ -876,11 +850,6 @@ function Workspace({ data }: { data: MapData & { world: WorldData } }) {
             数据仅保存在当前浏览器。清理网站数据会删除记录，可导出 JSON 备份。
           </p>
           <div className="about-details">
-            <h3>记录口径</h3>
-            <p>
-              共 {regionIds.size}{' '}
-              个可记录地区。国外按国家和地区记录，中国按市级及特殊区域记录。探索进度按全部可记录地区计算。
-            </p>
             <h3>地图来源与版本</h3>
             <p>
               精选景点坐标来自{' '}
